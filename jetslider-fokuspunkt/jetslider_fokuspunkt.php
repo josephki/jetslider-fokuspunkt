@@ -16,10 +16,32 @@
 // Exit if accessed directly
 if (!defined('ABSPATH')) exit;
 
-// Plugin-Update-Checker laden (falls vorhanden)
-if (!class_exists('Puc_v4_Factory') && file_exists(__DIR__ . '/plugin-update-checker/plugin-update-checker.php')) {
-    require_once __DIR__ . '/plugin-update-checker/plugin-update-checker.php';
+/**
+ * Plugin-Update-Checker laden (falls vorhanden)
+ * Verbesserte Version, die besser mit GitHub-Verzeichnisstrukturen umgeht
+ */
+function load_plugin_update_checker() {
+    $puc_path = __DIR__ . '/plugin-update-checker/plugin-update-checker.php';
+    $alt_puc_path = __DIR__ . '/../plugin-update-checker/plugin-update-checker.php';
+    
+    // Prüfen auf verschiedene mögliche Pfade aufgrund von GitHub-ZIP-Strukturen
+    if (file_exists($puc_path)) {
+        require_once $puc_path;
+    } elseif (file_exists($alt_puc_path)) {
+        require_once $alt_puc_path;
+    } else {
+        // Versuchen, PUC automatisch herunterzuladen
+        jetslider_fokuspunkt_check_puc();
+        
+        // Nach dem Download erneut prüfen
+        if (file_exists($puc_path)) {
+            require_once $puc_path;
+        }
+    }
 }
+
+// Plugin-Update-Checker laden
+load_plugin_update_checker();
 
 // Plugin-Klasse definieren
 class JetSlider_Fokuspunkt {
@@ -62,21 +84,38 @@ class JetSlider_Fokuspunkt {
     }
     
     /**
-     * Plugin-Update-Checker initialisieren
+     * Plugin-Update-Checker initialisieren mit verbesserten Optionen
+     * für GitHub-Verzeichnisstrukturen
      */
     private function setup_update_checker() {
         if (class_exists('Puc_v4_Factory')) {
             $update_checker = Puc_v4_Factory::buildUpdateChecker(
                 'https://github.com/josephki/jetslider-fokuspunkt/', // GitHub Repository URL
                 __FILE__, // Hauptdatei des Plugins
-                'jetslider-fokuspunkt' // Plugin-Slug
+                'jetslider-fokuspunkt', // Plugin-Slug
+                array(
+                    'zipDirectoryNameMatches' => false, // Erlaubt unterschiedliche Verzeichnisnamen
+                    'branch' => 'main'
+                )
             );
             
             // Wenn Sie ein privates Repository verwenden, setzen Sie den Zugriffstoken
             // $update_checker->setAuthentication('your-token-here');
             
-            // Den Branch setzen, der die stabile Version enthält
-            $update_checker->setBranch('main');
+            // Erweiterte Optionen für bessere Verzeichnisstruktur-Handhabung
+            if (method_exists($update_checker, 'getVcsApi')) {
+                // Aktiviere die Unterstützung für Release-Assets
+                $update_checker->getVcsApi()->enableReleaseAssets();
+                
+                // Erweiterte Optionen für die Verzeichnisstruktur
+                $update_checker->setAuthentication(''); // Leeren String für öffentliche Repos
+            }
+            
+            // Fehlerbehebung: In die Log-Datei schreiben, wenn Update-Checker initialisiert wurde
+            error_log('JetSlider Fokuspunkt: Update-Checker initialisiert');
+        } else {
+            // Fehlerbehebung: In die Log-Datei schreiben, wenn die Klasse nicht gefunden wurde
+            error_log('JetSlider Fokuspunkt: Puc_v4_Factory-Klasse nicht gefunden');
         }
     }
 
@@ -993,12 +1032,29 @@ add_filter('plugin_action_links_' . plugin_basename(__FILE__), array('JetSlider_
 
 /**
  * Automatischen Download des Plugin-Update-Checkers durchführen, wenn er nicht existiert
+ * Verbesserte Version, die besser mit Verzeichnisstrukturen umgeht
  */
 add_action('admin_init', 'jetslider_fokuspunkt_check_puc');
 
 function jetslider_fokuspunkt_check_puc() {
+    // Liste möglicher Pfade für den Plugin-Update-Checker
+    $possible_paths = array(
+        __DIR__ . '/plugin-update-checker/plugin-update-checker.php',
+        __DIR__ . '/../plugin-update-checker/plugin-update-checker.php',
+        dirname(plugin_dir_path(__FILE__)) . '/plugin-update-checker/plugin-update-checker.php'
+    );
+    
     // Prüfen, ob der Plugin-Update-Checker bereits existiert
-    if (!file_exists(__DIR__ . '/plugin-update-checker/plugin-update-checker.php')) {
+    $puc_exists = false;
+    foreach ($possible_paths as $path) {
+        if (file_exists($path)) {
+            $puc_exists = true;
+            require_once $path;
+            break;
+        }
+    }
+    
+    if (!$puc_exists) {
         // URL zum Plugin-Update-Checker
         $puc_url = 'https://github.com/YahnisElsts/plugin-update-checker/archive/refs/heads/master.zip';
         
@@ -1025,13 +1081,21 @@ function jetslider_fokuspunkt_check_puc() {
                 if (file_exists(__DIR__ . '/plugin-update-checker/plugin-update-checker.php')) {
                     require_once __DIR__ . '/plugin-update-checker/plugin-update-checker.php';
                     
-                    // Plugin-Update-Checker initialisieren
+                    // Plugin-Update-Checker initialisieren mit verbesserten Optionen
                     $update_checker = Puc_v4_Factory::buildUpdateChecker(
-                        'https://github.com/ihr-josephki/jetslider-fokuspunkt/',
+                        'https://github.com/josephki/jetslider-fokuspunkt/',
                         __FILE__,
-                        'jetslider-fokuspunkt'
+                        'jetslider-fokuspunkt',
+                        array(
+                            'zipDirectoryNameMatches' => false, // Erlaubt unterschiedliche Verzeichnisnamen
+                            'branch' => 'main'
+                        )
                     );
-                    $update_checker->setBranch('main');
+                    
+                    // Erweiterte Optionen
+                    if (method_exists($update_checker, 'getVcsApi')) {
+                        $update_checker->getVcsApi()->enableReleaseAssets();
+                    }
                 }
             }
             
@@ -1055,4 +1119,29 @@ function jetslider_fokuspunkt_initialize_filesystem() {
     }
     
     return $wp_filesystem;
+}
+
+/**
+ * Hilfsfunktion zur Erkennung verschiedener Plugin-Installationsstrukturen
+ * Ermöglicht die korrekte Arbeit des Plugins unabhängig davon, wie es installiert wurde
+ */
+function jetslider_fokuspunkt_get_plugin_dir() {
+    // Mögliche Plugin-Verzeichnisstrukturen
+    $possible_dirs = array(
+        __DIR__,                                       // Standard
+        dirname(__DIR__),                              // Falls in einem Unterverzeichnis
+        dirname(dirname(__DIR__)),                     // Falls tiefer verschachtelt
+        WP_PLUGIN_DIR . '/jetslider-fokuspunkt',       // Absoluter Pfad
+        WP_PLUGIN_DIR . '/jetslider-fokuspunkt-main'   // GitHub Download-Struktur
+    );
+    
+    // Das erste existierende Verzeichnis zurückgeben, das die Hauptdatei enthält
+    foreach ($possible_dirs as $dir) {
+        if (file_exists($dir . '/jetslider_fokuspunkt.php')) {
+            return $dir;
+        }
+    }
+    
+    // Fallback zum aktuellen Verzeichnis
+    return __DIR__;
 }
